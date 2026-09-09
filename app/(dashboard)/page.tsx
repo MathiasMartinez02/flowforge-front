@@ -2,22 +2,21 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { listWorkflows, runWorkflow } from "@/lib/api-client";
-import type { Workflow, WorkflowRun } from "@/lib/types";
+import type { Workflow } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
 
-// Estado de ejecucion de un workflow puntual desde la lista (por fila, no global).
-interface RunState {
-  loading: boolean;
-  lastRun?: WorkflowRun;
-  error?: string;
-}
-
 // Dashboard: lista de workflows reales del backend, con boton para ejecutar cada uno ahora.
+// Cambio en la Fase 2: la ejecucion ya no es sincrona (se encola via BullMQ), asi que "Ejecutar"
+// ya no puede mostrar el resultado inline en la fila — navega directo al timeline del run (que
+// arranca en 'running' y se actualiza solo por polling, ver runs/[id]/page.tsx).
 export default function DashboardPage() {
+  const router = useRouter();
   const [workflows, setWorkflows] = useState<Workflow[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
-  const [runStates, setRunStates] = useState<Record<string, RunState>>({});
+  const [runningId, setRunningId] = useState<string | null>(null);
+  const [runError, setRunError] = useState<string | null>(null);
 
   useEffect(() => {
     listWorkflows()
@@ -25,17 +24,16 @@ export default function DashboardPage() {
       .catch((err) => setLoadError(err instanceof Error ? err.message : String(err)));
   }, []);
 
-  // Dispara la ejecucion real de un workflow y guarda el resultado para mostrarlo inline en su fila.
+  // Dispara la ejecucion real de un workflow y navega a su timeline en cuanto el backend confirma el run creado.
   async function handleRun(id: string) {
-    setRunStates((prev) => ({ ...prev, [id]: { loading: true } }));
+    setRunningId(id);
+    setRunError(null);
     try {
       const run = await runWorkflow(id);
-      setRunStates((prev) => ({ ...prev, [id]: { loading: false, lastRun: run } }));
+      router.push(`/runs/${run.id}`);
     } catch (err) {
-      setRunStates((prev) => ({
-        ...prev,
-        [id]: { loading: false, error: err instanceof Error ? err.message : String(err) },
-      }));
+      setRunError(err instanceof Error ? err.message : String(err));
+      setRunningId(null);
     }
   }
 
@@ -76,6 +74,8 @@ export default function DashboardPage() {
         </Link>
       </div>
 
+      {runError && <p className="mb-4 rounded-lg bg-pink-bg px-4 py-3 text-sm text-pink">{runError}</p>}
+
       {workflows.length === 0 && (
         <div className="rounded-xl border border-dashed border-hairline p-10 text-center text-sm text-muted">
           Todavía no creaste ningún workflow. <Link href="/workflows/new" className="text-lime">Creá el primero</Link>.
@@ -83,46 +83,36 @@ export default function DashboardPage() {
       )}
 
       <div className="flex flex-col gap-2.5">
-        {workflows.map((workflow) => {
-          const runState = runStates[workflow.id];
-          const borderTone = runState?.lastRun?.status === "failed" || runState?.error ? "border-l-pink" : "border-l-lime";
-
-          return (
-            <div key={workflow.id} className={`flex items-center gap-4 rounded-xl border-l-[5px] bg-surface px-5 py-4 ${borderTone}`}>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2.5">
-                  <span className="text-[15px] font-bold">{workflow.name}</span>
-                  <span className="rounded bg-faint px-2 py-0.5 font-mono text-[11px] text-muted">
-                    {workflow.triggerType === "scheduled" ? workflow.cronExpression : "manual"}
-                  </span>
-                </div>
-                <div className="mt-1 text-sm text-muted">
-                  {workflow.steps.length} paso{workflow.steps.length === 1 ? "" : "s"}
-                  {runState?.lastRun && (
-                    <>
-                      {" · "}
-                      {runState.lastRun.status === "completed" ? "Completado" : "Fallido"} recién
-                    </>
-                  )}
-                  {runState?.error && <span className="text-pink"> · {runState.error}</span>}
-                </div>
+        {workflows.map((workflow) => (
+          <div key={workflow.id} className="flex items-center gap-4 rounded-xl border-l-[5px] border-l-lime bg-surface px-5 py-4">
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2.5">
+                <Link href={`/workflows/${workflow.id}`} className="text-[15px] font-bold hover:text-lime">
+                  {workflow.name}
+                </Link>
+                <span className="rounded bg-faint px-2 py-0.5 font-mono text-[11px] text-muted">
+                  {workflow.triggerType === "scheduled" ? workflow.cronExpression : "manual"}
+                </span>
               </div>
-
-              <StatusBadge tone={workflow.status === "active" ? "lime" : "faint"}>
-                {workflow.status === "active" ? "Activo" : workflow.status === "paused" ? "Pausado" : "Borrador"}
-              </StatusBadge>
-
-              <button
-                type="button"
-                onClick={() => handleRun(workflow.id)}
-                disabled={workflow.steps.length === 0 || runState?.loading}
-                className="text-sm font-bold text-lime disabled:cursor-not-allowed disabled:text-muted"
-              >
-                {runState?.loading ? "Ejecutando…" : "Ejecutar >"}
-              </button>
+              <div className="mt-1 text-sm text-muted">
+                {workflow.steps.length} paso{workflow.steps.length === 1 ? "" : "s"}
+              </div>
             </div>
-          );
-        })}
+
+            <StatusBadge tone={workflow.status === "active" ? "lime" : "faint"}>
+              {workflow.status === "active" ? "Activo" : workflow.status === "paused" ? "Pausado" : "Borrador"}
+            </StatusBadge>
+
+            <button
+              type="button"
+              onClick={() => handleRun(workflow.id)}
+              disabled={workflow.steps.length === 0 || runningId === workflow.id}
+              className="text-sm font-bold text-lime disabled:cursor-not-allowed disabled:text-muted"
+            >
+              {runningId === workflow.id ? "Ejecutando…" : "Ejecutar >"}
+            </button>
+          </div>
+        ))}
       </div>
     </div>
   );

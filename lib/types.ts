@@ -20,11 +20,19 @@ export interface Workflow {
   updatedAt: string;
 }
 
+// Un intento fallido registrado dentro de step_run.output.attempts (ver workflow-engine.service.ts).
+export interface StepAttempt {
+  attempt: number;
+  status: "failed";
+  message: string;
+  durationMs: number;
+}
+
 export interface StepRun {
   id: string;
   status: "pending" | "running" | "completed" | "failed" | "skipped";
   attempt: number;
-  output: Record<string, unknown> | null;
+  output: (Record<string, unknown> & { attempts?: StepAttempt[] }) | null;
   errorMessage: string | null;
   startedAt: string | null;
   finishedAt: string | null;
@@ -39,15 +47,26 @@ export interface WorkflowRun {
   finishedAt: string | null;
   errorMessage: string | null;
   stepRuns: StepRun[];
+  // Solo viene poblado en GET /runs/:id (findRun trae la relacion); listRuns no lo incluye.
+  workflow?: { id: string; name: string };
 }
 
-// Body de creacion: Fase 1 solo soporta pasos de accion http_request (condition llega en la Fase 2).
-export interface CreateWorkflowStepInput {
-  orderIndex: number;
-  stepType: "action";
-  actionType: "http_request";
-  config: { method: string; url: string };
-}
+// Body de creacion de un paso al crear un workflow.
+// Ampliado en la Fase 2: antes (Fase 1) solo existia http_request; ahora suma condition y notification.
+export type CreateWorkflowStepInput =
+  | { orderIndex: number; stepType: "action"; actionType: "http_request"; config: { method: string; url: string } }
+  | {
+      orderIndex: number;
+      stepType: "action";
+      actionType: "notification";
+      config: { to: string; subject: string; body: string };
+    }
+  | {
+      orderIndex: number;
+      stepType: "condition";
+      actionType?: undefined;
+      config: { field: string; operator: "==" | "!=" | ">" | "<" | "contains"; value: string };
+    };
 
 export interface CreateWorkflowInput {
   name: string;

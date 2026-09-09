@@ -31,7 +31,19 @@ export function createWorkflow(input: CreateWorkflowInput): Promise<Workflow> {
   return apiFetch<Workflow>("/workflows", { method: "POST", body: JSON.stringify(input) });
 }
 
-// Dispara una ejecucion sincrona y devuelve el run terminado (con sus step_runs).
+// Dispara una ejecucion y devuelve el run recien creado.
+// Cambio en la Fase 2: el backend ya no ejecuta de forma sincrona (encola por BullMQ), asi que el
+// run vuelve en estado 'running' — hay que consultar getRun/pollear hasta que termine.
 export function runWorkflow(id: string): Promise<WorkflowRun> {
   return apiFetch<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST" });
+}
+
+// Historial de runs de un workflow, mas recientes primero.
+export function listRuns(workflowId: string): Promise<WorkflowRun[]> {
+  return apiFetch<WorkflowRun[]>(`/workflows/${workflowId}/runs`);
+}
+
+// Detalle de un run puntual, con sus step_runs.
+export function getRun(id: string): Promise<WorkflowRun> {
+  return apiFetch<WorkflowRun>(`/runs/${id}`);
 }
