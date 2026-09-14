@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getWorkflow, listRuns, runWorkflow } from "@/lib/api-client";
+import { getWorkflow, listRuns, runWorkflow, updateWorkflowStatus } from "@/lib/api-client";
 import type { Workflow, WorkflowRun } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatDuration, formatRelativeTime } from "@/lib/format";
@@ -44,6 +44,7 @@ export default function WorkflowDetailPage() {
   const [runs, setRuns] = useState<WorkflowRun[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const [togglingStatus, setTogglingStatus] = useState(false);
 
   useEffect(() => {
     Promise.all([getWorkflow(id), listRuns(id)])
@@ -63,6 +64,22 @@ export default function WorkflowDetailPage() {
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
       setRunning(false);
+    }
+  }
+
+  // Alterna entre 'active' y 'paused'. Agregado en la Fase 3: afecta si el scheduler dispara este
+  // workflow cuando triggerType es 'scheduled' (un workflow manual pausado tampoco se puede ejecutar).
+  async function handleToggleStatus() {
+    if (!workflow) return;
+    const nextStatus = workflow.status === "active" ? "paused" : "active";
+    setTogglingStatus(true);
+    try {
+      const updated = await updateWorkflowStatus(workflow.id, nextStatus);
+      setWorkflow(updated);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setTogglingStatus(false);
     }
   }
 
@@ -106,14 +123,24 @@ export default function WorkflowDetailPage() {
               <div className="mt-1 text-sm font-semibold">{formatRelativeTime(lastRun.startedAt)}</div>
             </div>
           )}
-          <button
-            type="button"
-            onClick={handleRun}
-            disabled={workflow.steps.length === 0 || running}
-            className="rounded-full bg-lime px-5 py-2.5 text-sm font-bold text-lime-ink disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {running ? "Ejecutando…" : "Ejecutar ahora"}
-          </button>
+          <div className="flex gap-2.5">
+            <button
+              type="button"
+              onClick={handleToggleStatus}
+              disabled={workflow.status === "draft" || togglingStatus}
+              className="rounded-full border border-hairline px-4 py-2.5 text-sm font-bold text-foreground disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {togglingStatus ? "…" : workflow.status === "active" ? "Pausar" : "Activar"}
+            </button>
+            <button
+              type="button"
+              onClick={handleRun}
+              disabled={workflow.steps.length === 0 || running}
+              className="rounded-full bg-lime px-5 py-2.5 text-sm font-bold text-lime-ink disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {running ? "Ejecutando…" : "Ejecutar ahora"}
+            </button>
+          </div>
         </div>
       </div>
 

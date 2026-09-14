@@ -38,6 +38,12 @@ export function runWorkflow(id: string): Promise<WorkflowRun> {
   return apiFetch<WorkflowRun>(`/workflows/${id}/runs`, { method: "POST" });
 }
 
+// Activa o pausa un workflow. Agregado en la Fase 3: pausar un workflow programado da de baja su
+// cron en el scheduler del backend (ver SchedulerService.sync), sin borrar la expresion cron.
+export function updateWorkflowStatus(id: string, status: Workflow["status"]): Promise<Workflow> {
+  return apiFetch<Workflow>(`/workflows/${id}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
+}
+
 // Historial de runs de un workflow, mas recientes primero.
 export function listRuns(workflowId: string): Promise<WorkflowRun[]> {
   return apiFetch<WorkflowRun[]>(`/workflows/${workflowId}/runs`);
