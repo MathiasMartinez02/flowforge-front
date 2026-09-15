@@ -13,9 +13,10 @@ fetching (`react-hook-form`/`zod`/TanStack Query no estaban en el alcance del MV
 | Ruta | Qué muestra |
 |---|---|
 | `/` | dashboard: lista de workflows, stats reales (total/activos calculados del propio listado), botón "Ejecutar ahora" por fila |
-| `/workflows/new` | formulario de creación: nombre, trigger (manual/programado + cron), pasos (`http_request` / `notification` / `condition`) |
-| `/workflows/[id]` | detalle: cadena de pasos, activar/pausar, historial de runs |
+| `/workflows/new` | formulario de creación: nombre, trigger (manual/programado/webhook), pasos (`http_request` / `notification` / `ai_task` / `github` / `condition`) |
+| `/workflows/[id]` | detalle: cadena de pasos, activar/pausar, historial de runs, URL + secreto de firma (workflows `webhook`) |
 | `/runs/[id]` | timeline de una ejecución puntual, con reintentos visibles (`RunTimeline.tsx`) |
+| `/integrations` | estado de la conexión OAuth con GitHub (conectar/desconectar) y cómo configurar la action de IA |
 
 ## Cómo levantarlo
 
@@ -46,6 +47,18 @@ Requiere el backend corriendo (ver [`flowforge-backend`](https://github.com/Math
 ver el backend) — el detalle de un run (`/runs/[id]`) hace polling a `GET /runs/:id` cada 1.5s hasta
 llegar a un estado final, mostrando el timeline real por paso a medida que el worker los procesa
 (incluyendo los reintentos con backoff cuando una `action` falla).
+
+## Fase 4
+
+- **Webhook**: al crear un workflow con trigger "Webhook" el backend genera la URL pública y el
+  secreto de firma; ambos se muestran en `/workflows/[id]` (secreto oculto por default, con botón
+  "Mostrar" y "Regenerar" — invalida el anterior).
+- **IA**: un paso `ai_task` es solo un prompt (soporta `{{campo}}` contra el output del paso
+  anterior) — el provider (Gemini/Ollama) se configura por variable de entorno del backend, no
+  desde el formulario.
+- **GitHub**: un paso `github` crea un issue o comenta uno existente en un repo (`owner/repo`). Usa
+  la cuenta conectada en `/integrations` — sin conexión, el paso falla con un mensaje claro (mismo
+  patrón que SMTP sin configurar en la Fase 2).
 
 ## Testing
 

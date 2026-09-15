@@ -1,4 +1,4 @@
-import type { CreateWorkflowInput, Workflow, WorkflowRun } from "./types";
+import type { CreateWorkflowInput, GithubIntegrationStatus, Workflow, WorkflowRun } from "./types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:3000";
 
@@ -52,4 +52,28 @@ export function listRuns(workflowId: string): Promise<WorkflowRun[]> {
 // Detalle de un run puntual, con sus step_runs.
 export function getRun(id: string): Promise<WorkflowRun> {
   return apiFetch<WorkflowRun>(`/runs/${id}`);
+}
+
+// Agregado en la Fase 4: regenera el secreto de firma de un workflow con trigger "webhook".
+export function regenerateWebhookSecret(id: string): Promise<Workflow> {
+  return apiFetch<Workflow>(`/workflows/${id}/webhook-secret/regenerate`, { method: "POST" });
+}
+
+// URL publica a la que hay que mandar el POST firmado para disparar un workflow "webhook".
+export function webhookUrlFor(workflowId: string): string {
+  return `${API_URL}/webhooks/${workflowId}`;
+}
+
+// Estado de la conexion de GitHub (Fase 4): si hay una cuenta conectada y con que login.
+export function getGithubStatus(): Promise<GithubIntegrationStatus> {
+  return apiFetch<GithubIntegrationStatus>("/integrations/github/status");
+}
+
+// Navega el browser al flujo real de OAuth de GitHub (el backend redirige a github.com).
+export function githubAuthorizeUrl(): string {
+  return `${API_URL}/integrations/github/authorize`;
+}
+
+export function disconnectGithub(): Promise<{ disconnected: true }> {
+  return apiFetch<{ disconnected: true }>("/integrations/github/disconnect", { method: "DELETE" });
 }

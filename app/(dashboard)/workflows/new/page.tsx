@@ -6,13 +6,17 @@ import { createWorkflow } from "@/lib/api-client";
 import type { CreateWorkflowStepInput } from "@/lib/types";
 
 type ConditionOperator = "==" | "!=" | ">" | "<" | "contains";
+type GithubActionKind = "create_issue" | "add_comment";
 
 // Borrador de un paso en el formulario, previo a convertirse en CreateWorkflowStepInput al guardar.
 // Ampliado en la Fase 2: antes (Fase 1) solo existia el tipo http_request.
+// Ampliado en la Fase 4: se suman "ai_task" y "github".
 type DraftStep =
   | { kind: "http_request"; method: string; url: string }
   | { kind: "condition"; field: string; operator: ConditionOperator; value: string }
-  | { kind: "notification"; to: string; subject: string; body: string };
+  | { kind: "notification"; to: string; subject: string; body: string }
+  | { kind: "ai_task"; prompt: string }
+  | { kind: "github"; repo: string; githubAction: GithubActionKind; title: string; body: string; issueNumber: string };
 
 function emptyHttpStep(): DraftStep {
   return { kind: "http_request", method: "GET", url: "" };
@@ -20,14 +24,16 @@ function emptyHttpStep(): DraftStep {
 
 const OPERATORS: ConditionOperator[] = ["==", "!=", ">", "<", "contains"];
 
-// Formulario de creacion: nombre, trigger (manual/programado) y pasos en orden.
+// Formulario de creacion: nombre, trigger (manual/programado/webhook) y pasos en orden.
 // Modificado en la Fase 2: cada paso ahora elige entre Accion (http_request/notification) o Condicion,
 // siguiendo el diseño de CrearWorkflow.dc.html (pill de stepType + pill de actionType dentro de cada tarjeta).
+// Modificado en la Fase 4: se suma el trigger "webhook" (sin cron, el secreto se genera en el backend
+// y se muestra recien en el detalle del workflow) y las actions "ai_task"/"github".
 export default function NewWorkflowPage() {
   const router = useRouter();
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
-  const [triggerType, setTriggerType] = useState<"manual" | "scheduled">("manual");
+  const [triggerType, setTriggerType] = useState<"manual" | "scheduled" | "webhook">("manual");
   const [cronExpression, setCronExpression] = useState("");
   const [steps, setSteps] = useState<DraftStep[]>([emptyHttpStep()]);
   const [saving, setSaving] = useState(false);
@@ -43,7 +49,9 @@ export default function NewWorkflowPage() {
         if (i !== index) return step;
         if (kind === "http_request") return { kind, method: "GET", url: "" };
         if (kind === "condition") return { kind, field: "", operator: "==", value: "" };
-        return { kind, to: "", subject: "", body: "" };
+        if (kind === "notification") return { kind, to: "", subject: "", body: "" };
+        if (kind === "ai_task") return { kind, prompt: "" };
+        return { kind, repo: "", githubAction: "create_issue", title: "", body: "", issueNumber: "" };
       }),
     );
   }
@@ -60,6 +68,12 @@ export default function NewWorkflowPage() {
     if (step.kind === "http_request" && !step.url.trim()) return "Falta la URL de un paso HTTP Request";
     if (step.kind === "condition" && (!step.field.trim() || !step.value.trim())) return "Falta completar una condición";
     if (step.kind === "notification" && !step.to.trim()) return "Falta el destinatario de una notificación";
+    if (step.kind === "ai_task" && !step.prompt.trim()) return "Falta el prompt de un paso de IA";
+    if (step.kind === "github") {
+      if (!step.repo.trim().includes("/")) return 'Falta el repo de GitHub (formato "owner/repo")';
+      if (step.githubAction === "create_issue" && !step.title.trim()) return "Falta el título del issue de GitHub";
+      if (step.githubAction === "add_comment" && !step.issueNumber.trim()) return "Falta el número de issue para comentar";
+    }
     return null;
   }
 
@@ -70,11 +84,28 @@ export default function NewWorkflowPage() {
     if (step.kind === "condition") {
       return { orderIndex, stepType: "condition", config: { field: step.field.trim(), operator: step.operator, value: step.value.trim() } };
     }
+    if (step.kind === "notification") {
+      return {
+        orderIndex,
+        stepType: "action",
+        actionType: "notification",
+        config: { to: step.to.trim(), subject: step.subject.trim(), body: step.body.trim() },
+      };
+    }
+    if (step.kind === "ai_task") {
+      return { orderIndex, stepType: "action", actionType: "ai_task", config: { prompt: step.prompt.trim() } };
+    }
     return {
       orderIndex,
       stepType: "action",
-      actionType: "notification",
-      config: { to: step.to.trim(), subject: step.subject.trim(), body: step.body.trim() },
+      actionType: "github",
+      config: {
+        repo: step.repo.trim(),
+        githubAction: step.githubAction,
+        title: step.title.trim() || undefined,
+        body: step.body.trim() || undefined,
+        issueNumber: step.issueNumber.trim() || undefined,
+      },
     };
   }
 
@@ -139,8 +170,8 @@ export default function NewWorkflowPage() {
 
       <section className="mb-5 rounded-2xl bg-surface p-6">
         <h2 className="mb-[18px] font-display text-base font-bold">Disparador</h2>
-        <div className="mb-4 grid grid-cols-2 gap-3">
-          {(["manual", "scheduled"] as const).map((option) => (
+        <div className="mb-4 grid grid-cols-3 gap-3">
+          {(["manual", "scheduled", "webhook"] as const).map((option) => (
             <button
               key={option}
               type="button"
@@ -149,8 +180,12 @@ export default function NewWorkflowPage() {
                 triggerType === option ? "border-2 border-lime bg-violet-bg" : "border-hairline"
               }`}
             >
-              <div className="text-sm font-bold">{option === "manual" ? "Manual" : "Programado"}</div>
-              <div className="text-xs text-muted">{option === "manual" ? "Lo ejecutás vos" : "Corre solo, en cron"}</div>
+              <div className="text-sm font-bold">
+                {option === "manual" ? "Manual" : option === "scheduled" ? "Programado" : "Webhook"}
+              </div>
+              <div className="text-xs text-muted">
+                {option === "manual" ? "Lo ejecutás vos" : option === "scheduled" ? "Corre solo, en cron" : "Lo dispara un POST externo"}
+              </div>
             </button>
           ))}
         </div>
@@ -164,6 +199,11 @@ export default function NewWorkflowPage() {
               className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-sm outline-none focus:border-lime"
             />
           </>
+        )}
+        {triggerType === "webhook" && (
+          <p className="text-xs text-muted">
+            La URL pública y el secreto de firma (HMAC-SHA256) se generan al guardar — se muestran en el detalle del workflow.
+          </p>
         )}
       </section>
 
@@ -211,7 +251,7 @@ export default function NewWorkflowPage() {
                 {step.kind !== "condition" && (
                   <>
                     <label className="mb-2 block text-xs font-bold tracking-wide text-muted">TIPO DE ACCIÓN</label>
-                    <div className="mb-3.5 flex gap-2">
+                    <div className="mb-3.5 flex flex-wrap gap-2">
                       <button
                         type="button"
                         onClick={() => setStepKind(index, "http_request")}
@@ -229,6 +269,24 @@ export default function NewWorkflowPage() {
                         }`}
                       >
                         Notificación
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStepKind(index, "ai_task")}
+                        className={`rounded-lg px-3.5 py-2 text-xs font-semibold ${
+                          step.kind === "ai_task" ? "bg-violet-bg text-[#c9c1ff]" : "border border-hairline text-muted"
+                        }`}
+                      >
+                        IA
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setStepKind(index, "github")}
+                        className={`rounded-lg px-3.5 py-2 text-xs font-semibold ${
+                          step.kind === "github" ? "bg-violet-bg text-[#c9c1ff]" : "border border-hairline text-muted"
+                        }`}
+                      >
+                        GitHub
                       </button>
                     </div>
                   </>
@@ -312,6 +370,81 @@ export default function NewWorkflowPage() {
                     </div>
                     <div>
                       <label className="mb-2 block text-xs font-bold tracking-wide text-muted">MENSAJE (OPCIONAL)</label>
+                      <textarea
+                        value={step.body}
+                        onChange={(e) => updateStep(index, { body: e.target.value })}
+                        rows={2}
+                        placeholder="Podés usar {{campo}} para incluir datos del paso anterior."
+                        className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-sm outline-none focus:border-lime"
+                      />
+                    </div>
+                  </div>
+                )}
+
+                {step.kind === "ai_task" && (
+                  <div>
+                    <label className="mb-2 block text-xs font-bold tracking-wide text-muted">PROMPT</label>
+                    <textarea
+                      value={step.prompt}
+                      onChange={(e) => updateStep(index, { prompt: e.target.value })}
+                      rows={3}
+                      placeholder="Resumí en una línea el resultado: {{data}}"
+                      className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-sm outline-none focus:border-lime"
+                    />
+                    <p className="mt-2 text-xs text-muted">
+                      Podés usar {"{{campo}}"} para incluir datos del paso anterior. El provider (Gemini/Ollama) se configura por
+                      variable de entorno del backend.
+                    </p>
+                  </div>
+                )}
+
+                {step.kind === "github" && (
+                  <div className="flex flex-col gap-2.5">
+                    <div className="grid grid-cols-2 gap-2.5">
+                      <div>
+                        <label className="mb-2 block text-xs font-bold tracking-wide text-muted">REPO</label>
+                        <input
+                          value={step.repo}
+                          onChange={(e) => updateStep(index, { repo: e.target.value })}
+                          placeholder="owner/repo"
+                          className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-sm outline-none focus:border-lime"
+                        />
+                      </div>
+                      <div>
+                        <label className="mb-2 block text-xs font-bold tracking-wide text-muted">ACCIÓN</label>
+                        <select
+                          value={step.githubAction}
+                          onChange={(e) => updateStep(index, { githubAction: e.target.value as GithubActionKind })}
+                          className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 text-sm outline-none focus:border-lime"
+                        >
+                          <option value="create_issue">Crear issue</option>
+                          <option value="add_comment">Comentar issue</option>
+                        </select>
+                      </div>
+                    </div>
+                    {step.githubAction === "create_issue" ? (
+                      <div>
+                        <label className="mb-2 block text-xs font-bold tracking-wide text-muted">TÍTULO</label>
+                        <input
+                          value={step.title}
+                          onChange={(e) => updateStep(index, { title: e.target.value })}
+                          placeholder="Falló el chequeo de salud"
+                          className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 text-sm outline-none focus:border-lime"
+                        />
+                      </div>
+                    ) : (
+                      <div>
+                        <label className="mb-2 block text-xs font-bold tracking-wide text-muted">NÚMERO DE ISSUE</label>
+                        <input
+                          value={step.issueNumber}
+                          onChange={(e) => updateStep(index, { issueNumber: e.target.value })}
+                          placeholder="42"
+                          className="w-full rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-sm outline-none focus:border-lime"
+                        />
+                      </div>
+                    )}
+                    <div>
+                      <label className="mb-2 block text-xs font-bold tracking-wide text-muted">CUERPO (OPCIONAL)</label>
                       <textarea
                         value={step.body}
                         onChange={(e) => updateStep(index, { body: e.target.value })}

@@ -12,14 +12,19 @@ function backoffAfterAttempt(attempt: number): string | null {
   return formatMs(delayMs);
 }
 
+// Ampliado en la Fase 4: se suman "ai_task" y "github" (antes caian al default "HTTP Request").
 function stepLabel(stepRun: StepRun): string {
   const { stepType, actionType } = stepRun.workflowStep;
   if (stepType === "condition") return "Condición";
   if (actionType === "notification") return "Notificación";
+  if (actionType === "ai_task") return "IA";
+  if (actionType === "github") return "GitHub";
   return "HTTP Request";
 }
 
 // Linea mono debajo del titulo del paso: resumen del resultado (o del error) segun el tipo de paso.
+// Ampliado en la Fase 4: "ai_task" y "github" tenian su propio shape de output/config, no method/url
+// como http_request — sin este branch mostraban "-> ok" o texto vacio en vez del resultado real.
 function stepDetail(stepRun: StepRun): string {
   const { workflowStep, output, errorMessage } = stepRun;
 
@@ -32,6 +37,20 @@ function stepDetail(stepRun: StepRun): string {
   if (workflowStep.actionType === "notification") {
     const cfg = workflowStep.config as { to?: string };
     return stepRun.status === "completed" ? `Email enviado a ${cfg.to}` : `Error enviando a ${cfg.to}${errorMessage ? `: ${errorMessage}` : ""}`;
+  }
+
+  if (workflowStep.actionType === "ai_task") {
+    if (stepRun.status === "completed") {
+      const response = String(output?.response ?? "");
+      return response.length > 80 ? `${response.slice(0, 80)}…` : response;
+    }
+    return errorMessage ?? "Error ejecutando el paso de IA";
+  }
+
+  if (workflowStep.actionType === "github") {
+    const cfg = workflowStep.config as { repo?: string; githubAction?: string };
+    if (stepRun.status === "completed") return `${cfg.repo ?? ""} -> ${String(output?.url ?? "ok")}`;
+    return errorMessage ? `${cfg.repo ?? ""} -> ${errorMessage}` : (cfg.repo ?? "");
   }
 
   const cfg = workflowStep.config as { method?: string; url?: string };
@@ -73,7 +92,9 @@ export function RunTimeline({ run }: { run: WorkflowRun }) {
           <div className="my-0.5 w-0.5 flex-1 bg-hairline" />
         </div>
         <div className="pb-[22px]">
-          <div className="text-sm font-bold">Disparador: {run.triggerSource === "manual" ? "manual" : "programado"}</div>
+          <div className="text-sm font-bold">
+            Disparador: {run.triggerSource === "manual" ? "manual" : run.triggerSource === "scheduled" ? "programado" : "webhook"}
+          </div>
           <div className="mt-0.5 font-mono text-xs text-muted">{formatClock(run.startedAt)}</div>
         </div>
       </div>

@@ -107,7 +107,9 @@ export default function RunDetailPage() {
       <div className="mb-2 flex flex-wrap items-center gap-3">
         <StatusBadge tone={STATUS_TONE[run.status]}>{STATUS_LABEL[run.status]}</StatusBadge>
         <span className="font-mono text-xs text-muted">#{run.id.slice(0, 8)}</span>
-        <span className="text-xs text-muted">· disparado por {run.triggerSource === "manual" ? "manual" : "programación"}</span>
+        <span className="text-xs text-muted">
+          · disparado por {run.triggerSource === "manual" ? "manual" : run.triggerSource === "scheduled" ? "programación" : "webhook"}
+        </span>
       </div>
       <h1 className="mb-5 font-display text-[30px] font-bold tracking-tight">Ejecución del workflow</h1>
 

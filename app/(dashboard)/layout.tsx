@@ -11,6 +11,10 @@ export default function DashboardLayout({ children }: { children: React.ReactNod
             <Logo />
             <span className="font-display text-lg font-bold tracking-tight">FlowForge</span>
           </Link>
+          {/* Agregado en la Fase 4: link a la pantalla de integraciones (conexion con GitHub). */}
+          <Link href="/integrations" className="text-sm text-muted hover:text-lime">
+            Integraciones
+          </Link>
         </div>
         <a
           href="https://github.com"

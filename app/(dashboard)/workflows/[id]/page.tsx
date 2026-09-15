@@ -3,12 +3,13 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { getWorkflow, listRuns, runWorkflow, updateWorkflowStatus } from "@/lib/api-client";
+import { getWorkflow, listRuns, regenerateWebhookSecret, runWorkflow, updateWorkflowStatus, webhookUrlFor } from "@/lib/api-client";
 import type { Workflow, WorkflowRun } from "@/lib/types";
 import { StatusBadge } from "@/components/StatusBadge";
 import { formatDuration, formatRelativeTime } from "@/lib/format";
 
 // Etiqueta + resumen de un paso para la cadena horizontal de "Pasos" (ver design DetalleWorkflow.dc.html).
+// Ampliado en la Fase 4: se suman los resumenes de "ai_task" y "github".
 function stepSummary(step: Workflow["steps"][number]): { label: string; detail: string } {
   if (step.stepType === "condition") {
     const cfg = step.config as { field?: string; operator?: string; value?: unknown };
@@ -17,6 +18,15 @@ function stepSummary(step: Workflow["steps"][number]): { label: string; detail: 
   if (step.actionType === "notification") {
     const cfg = step.config as { to?: string };
     return { label: "Notificación", detail: String(cfg.to ?? "") };
+  }
+  if (step.actionType === "ai_task") {
+    const cfg = step.config as { prompt?: string };
+    const prompt = cfg.prompt ?? "";
+    return { label: "IA", detail: prompt.length > 40 ? `${prompt.slice(0, 40)}…` : prompt };
+  }
+  if (step.actionType === "github") {
+    const cfg = step.config as { repo?: string; githubAction?: string };
+    return { label: "GitHub", detail: `${cfg.githubAction === "add_comment" ? "Comentar" : "Crear issue"} · ${cfg.repo ?? ""}` };
   }
   const cfg = step.config as { method?: string; url?: string };
   return { label: "HTTP Request", detail: `${cfg.method ?? ""} ${cfg.url ?? ""}`.trim() };
@@ -45,6 +55,8 @@ export default function WorkflowDetailPage() {
   const [error, setError] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
   const [togglingStatus, setTogglingStatus] = useState(false);
+  const [secretVisible, setSecretVisible] = useState(false);
+  const [regeneratingSecret, setRegeneratingSecret] = useState(false);
 
   useEffect(() => {
     Promise.all([getWorkflow(id), listRuns(id)])
@@ -80,6 +92,22 @@ export default function WorkflowDetailPage() {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
       setTogglingStatus(false);
+    }
+  }
+
+  // Agregado en la Fase 4: invalida el secreto de firma anterior (cualquier integracion externa
+  // que todavia lo use empieza a recibir 403 hasta que se actualice con el nuevo).
+  async function handleRegenerateSecret() {
+    if (!workflow) return;
+    setRegeneratingSecret(true);
+    try {
+      const updated = await regenerateWebhookSecret(workflow.id);
+      setWorkflow(updated);
+      setSecretVisible(true);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setRegeneratingSecret(false);
     }
   }
 
@@ -143,6 +171,37 @@ export default function WorkflowDetailPage() {
           </div>
         </div>
       </div>
+
+      {workflow.triggerType === "webhook" && (
+        <section className="mb-6 rounded-2xl bg-surface p-6">
+          <h2 className="mb-[18px] font-display text-[15px] font-bold">Webhook</h2>
+          <label className="mb-2 block text-xs font-bold tracking-wide text-muted">URL PÚBLICA (POST)</label>
+          <div className="mb-3.5 rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-xs">
+            {webhookUrlFor(workflow.id)}
+          </div>
+          <label className="mb-2 block text-xs font-bold tracking-wide text-muted">SECRETO DE FIRMA (HMAC-SHA256)</label>
+          <div className="mb-2 flex items-center gap-2.5">
+            <div className="flex-1 rounded-lg border border-hairline bg-background px-3.5 py-2.5 font-mono text-xs">
+              {secretVisible ? workflow.webhookSecret : "•".repeat(24)}
+            </div>
+            <button type="button" onClick={() => setSecretVisible((v) => !v)} className="text-xs font-bold text-muted hover:text-lime">
+              {secretVisible ? "Ocultar" : "Mostrar"}
+            </button>
+            <button
+              type="button"
+              onClick={handleRegenerateSecret}
+              disabled={regeneratingSecret}
+              className="text-xs font-bold text-pink disabled:opacity-60"
+            >
+              {regeneratingSecret ? "…" : "Regenerar"}
+            </button>
+          </div>
+          <p className="text-xs text-muted">
+            Firmá el body crudo con HMAC-SHA256 usando el secreto y mandalo en el header{" "}
+            <span className="font-mono">X-Flowforge-Signature: sha256=&lt;hex&gt;</span>.
+          </p>
+        </section>
+      )}
 
       <section className="mb-6 rounded-2xl bg-surface p-6">
         <h2 className="mb-[18px] font-display text-[15px] font-bold">Pasos</h2>
